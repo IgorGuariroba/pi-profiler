@@ -8,7 +8,14 @@
 // factory; abrir o WriteStream em session_start, fechar em session_shutdown.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { TrailWriter } from "./src/trail.ts";
-import { sessionOpen, sessionClose } from "./src/spans.ts";
+import { sessionOpen, sessionClose, turnOpen, turnClose } from "./src/spans.ts";
+import {
+	TurnAccumulator,
+	messageModel,
+	messageUsage,
+	messageIsError,
+	messageStopReason,
+} from "./src/turn-accumulator.ts";
 
 // Deriva "provider/id" do modelo atual, ou undefined se ainda desconhecido.
 function modelLabel(ctx: ExtensionContext): string | undefined {
@@ -30,9 +37,15 @@ function resolveSessionId(ctx: ExtensionContext): string {
 export default function (pi: ExtensionAPI) {
 	let writer: TrailWriter | undefined;
 	let sessionId: string | undefined;
+	// Sequencial monótono dos turnos na trilha (garante spanId único mesmo quando o
+	// turnIndex do Pi reinicia entre runs). O turno em andamento fica em `current`.
+	let turnSeq = 0;
+	let current: TurnAccumulator | undefined;
 
 	pi.on("session_start", async (event, ctx) => {
 		sessionId = resolveSessionId(ctx);
+		turnSeq = 0;
+		current = undefined;
 		writer = new TrailWriter(sessionId);
 		writer.write(
 			sessionOpen({
@@ -43,6 +56,34 @@ export default function (pi: ExtensionAPI) {
 				ts: Date.now(),
 			}),
 		);
+	});
+
+	pi.on("turn_start", async (event) => {
+		if (!writer) return;
+		turnSeq += 1;
+		current = new TurnAccumulator(turnSeq, event.turnIndex, Date.now());
+		writer.write(turnOpen({ seq: turnSeq, turnIndex: event.turnIndex, ts: current.openTs }));
+	});
+
+	pi.on("after_provider_response", async (event) => {
+		current?.recordProviderResponse(event.status, Date.now());
+	});
+
+	pi.on("turn_end", async (event) => {
+		if (!writer || !current) return;
+		const message = event.message;
+		writer.write(
+			turnClose({
+				seq: current.seq,
+				ts: Date.now(),
+				model: messageModel(message),
+				usage: messageUsage(message),
+				stopReason: messageStopReason(message),
+				isError: messageIsError(message),
+				provider: current.providerStat(),
+			}),
+		);
+		current = undefined;
 	});
 
 	pi.on("session_shutdown", async (event) => {

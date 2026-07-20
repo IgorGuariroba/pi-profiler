@@ -5,7 +5,7 @@
 // Session span e o pareamento genérico (incluindo órfãos); os demais spans e as
 // visões de agregação entram nos tickets seguintes.
 
-import type { Mark, SpanKind } from "./spans.ts";
+import type { Mark, SpanKind, TurnUsage, ProviderStat } from "./spans.ts";
 
 export type SpanStatus = "open" | "closed";
 
@@ -38,11 +38,45 @@ export interface SessionFrame {
 	incomplete: boolean;
 }
 
+// Recorte de um turno para a timeline e as agregações. Derivado dos Turn spans.
+export interface TurnRow {
+	spanId: string;
+	turnIndex: number;
+	status: SpanStatus;
+	startedAt: number;
+	endedAt?: number;
+	durationMs?: number;
+	model?: string;
+	usage?: TurnUsage;
+	stopReason?: string;
+	isError: boolean;
+	provider?: ProviderStat;
+}
+
+// Pulso acumulado da sessão, para o cabeçalho-resumo da TUI.
+export interface SessionSummary {
+	/** Tokens vivos = totalTokens do último turno fechado com usage (aproximação v1). */
+	liveTokens: number;
+	/** Custo acumulado = soma de usage.cost.total dos turnos fechados. */
+	totalCost: number;
+	/** spanId do span ainda aberto mais recente, ou undefined se nada em voo. */
+	runningSpanId?: string;
+	/** Tipo do span em voo (ex.: "turn"), para o cabeçalho dizer o que executa agora. */
+	runningSpan?: SpanKind;
+	/** Turnos fechados em erro / total de turnos fechados. */
+	errorTurns: number;
+	closedTurns: number;
+}
+
 export interface Timeline {
 	/** Todos os spans na ordem em que abriram. */
 	spans: TimelineSpan[];
 	/** Recorte do Session span, se presente. */
 	session?: SessionFrame;
+	/** Turnos derivados dos Turn spans, em ordem de abertura. */
+	turns: TurnRow[];
+	/** Pulso acumulado da sessão. */
+	summary: SessionSummary;
 }
 
 const PROTOCOL_FIELDS = new Set(["v", "kind", "span", "spanId", "ts"]);
@@ -84,7 +118,8 @@ export function projectTimeline(marks: Mark[]): Timeline {
 	}
 
 	const spans = order.map((id) => byId.get(id)!);
-	const timeline: Timeline = { spans };
+	const turns = spans.filter((s) => s.span === "turn").map(toTurnRow);
+	const timeline: Timeline = { spans, turns, summary: summarize(spans, turns) };
 
 	const sessionSpan = spans.find((s) => s.span === "session");
 	if (sessionSpan) {
@@ -92,6 +127,76 @@ export function projectTimeline(marks: Mark[]): Timeline {
 	}
 
 	return timeline;
+}
+
+function toTurnRow(span: TimelineSpan): TurnRow {
+	const close = span.closeFields ?? {};
+	const row: TurnRow = {
+		spanId: span.spanId,
+		turnIndex: Number(span.openFields.turnIndex ?? 0),
+		status: span.status,
+		startedAt: span.startedAt,
+		isError: close.isError === true,
+	};
+	if (span.status === "closed") {
+		row.endedAt = span.endedAt;
+		row.durationMs = span.durationMs;
+	}
+	if (typeof close.model === "string") row.model = close.model;
+	if (isTurnUsage(close.usage)) row.usage = close.usage;
+	if (typeof close.stopReason === "string") row.stopReason = close.stopReason;
+	if (isProviderStat(close.provider)) row.provider = close.provider;
+	return row;
+}
+
+// Tokens vivos: totalTokens do último turno FECHADO que reportou usage — o valor
+// mais recente de ocupação de contexto que temos sem o ContextSnapshot (ticket 4).
+// Custo acumulado: soma dos custos totais dos turnos fechados. "Executando agora":
+// o span aberto mais recente (o próprio Turn em voo, ou um span de outro tipo).
+function summarize(spans: TimelineSpan[], turns: TurnRow[]): SessionSummary {
+	let totalCost = 0;
+	let liveTokens = 0;
+	let errorTurns = 0;
+	let closedTurns = 0;
+	for (const turn of turns) {
+		if (turn.status !== "closed") continue;
+		closedTurns += 1;
+		if (turn.isError) errorTurns += 1;
+		if (turn.usage) {
+			totalCost += turn.usage.cost.total;
+			liveTokens = turn.usage.totalTokens;
+		}
+	}
+
+	const summary: SessionSummary = { liveTokens, totalCost, errorTurns, closedTurns };
+	// O span em voo mais recente que NÃO é a própria sessão (a sessão fica aberta a
+	// vida toda; ela não é "o que executa agora").
+	for (let i = spans.length - 1; i >= 0; i -= 1) {
+		const s = spans[i];
+		if (s.status === "open" && s.span !== "session") {
+			summary.runningSpanId = s.spanId;
+			summary.runningSpan = s.span;
+			break;
+		}
+	}
+	return summary;
+}
+
+function isTurnUsage(value: unknown): value is TurnUsage {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		typeof (value as TurnUsage).totalTokens === "number" &&
+		typeof (value as TurnUsage).cost === "object"
+	);
+}
+
+function isProviderStat(value: unknown): value is ProviderStat {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		typeof (value as ProviderStat).status === "number"
+	);
 }
 
 function toSessionFrame(span: TimelineSpan): SessionFrame {

@@ -99,3 +99,66 @@ test("modelo desconhecido: o marco open não carrega model", async () => {
 		t.restore();
 	}
 });
+
+test("registra os handlers de turno e provider", async () => {
+	const t = withTempHome();
+	try {
+		const { default: factory } = await import(`../index.ts?case=turn-reg`);
+		const { handlers, pi } = makePi();
+		factory(pi);
+		assert.equal(typeof handlers.turn_start, "function");
+		assert.equal(typeof handlers.turn_end, "function");
+		assert.equal(typeof handlers.after_provider_response, "function");
+	} finally {
+		t.restore();
+	}
+});
+
+test("turno completo grava Turn open/close com usage e provider", async () => {
+	const t = withTempHome();
+	try {
+		const { default: factory } = await import(`../index.ts?case=turn-full`);
+		const { handlers, pi } = makePi();
+		factory(pi);
+
+		const ctx = makeCtx({ sessionId: "sess-turn" });
+		await handlers.session_start({ reason: "startup" }, ctx);
+		await handlers.turn_start({ turnIndex: 0 }, ctx);
+		await handlers.after_provider_response({ status: 200, headers: {} }, ctx);
+		await handlers.turn_end(
+			{
+				turnIndex: 0,
+				message: {
+					role: "assistant",
+					provider: "anthropic",
+					model: "claude-x",
+					stopReason: "stop",
+					usage: {
+						input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.002 },
+					},
+				},
+				toolResults: [],
+			},
+			ctx,
+		);
+		await handlers.session_shutdown({ reason: "quit" }, ctx);
+
+		const path = trailPath("sess-turn", homedir());
+		const marks = await new TrailReader(path).poll();
+		const turnOpen = marks.find((m) => m.span === "turn" && m.kind === "open");
+		const turnClose = marks.find((m) => m.span === "turn" && m.kind === "close");
+
+		assert.ok(turnOpen);
+		assert.ok(turnClose);
+		assert.equal(turnOpen.spanId, turnClose.spanId);
+		assert.equal(turnClose.model, "anthropic/claude-x");
+		assert.equal(turnClose.usage.totalTokens, 15);
+		assert.equal(turnClose.stopReason, "stop");
+		assert.equal(turnClose.isError, false);
+		assert.equal(turnClose.provider.status, 200);
+		assert.equal(turnClose.provider.retries, 0);
+	} finally {
+		t.restore();
+	}
+});

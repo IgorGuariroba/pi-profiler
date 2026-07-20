@@ -2,7 +2,7 @@
 // para poder ser testado como função pura: recebe o modelo da timeline e um tema
 // mínimo, devolve as linhas a exibir.
 
-import type { Timeline, TimelineSpan } from "./timeline.ts";
+import type { Timeline, TimelineSpan, TurnRow, SessionSummary } from "./timeline.ts";
 
 // Subconjunto do theme do pi-tui de que precisamos. O binário passa o theme real;
 // os testes passam um tema identidade.
@@ -20,6 +20,15 @@ function fmtDuration(ms: number | undefined): string {
 	if (ms === undefined) return "…";
 	if (ms < 1000) return `${ms}ms`;
 	return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function fmtCost(usd: number): string {
+	return `$${usd.toFixed(4)}`;
+}
+
+function fmtTokens(n: number): string {
+	if (n < 1000) return String(n);
+	return `${(n / 1000).toFixed(1)}k`;
 }
 
 function spanLine(span: TimelineSpan, theme: RenderTheme): string {
@@ -53,10 +62,55 @@ export function renderTimeline(timeline: Timeline, theme: RenderTheme = identity
 		lines.push(theme.fg("dim", "aguardando spans…"));
 	}
 
-	if (timeline.spans.length > 0) {
+	lines.push(summaryLine(timeline.summary, theme));
+
+	if (timeline.turns.length > 0) {
+		lines.push("");
+		for (const turn of timeline.turns) lines.push(turnLine(turn, theme));
+	} else if (timeline.spans.length > 0) {
 		lines.push("");
 		for (const span of timeline.spans) lines.push(spanLine(span, theme));
 	}
 
 	return lines;
+}
+
+function summaryLine(summary: SessionSummary, theme: RenderTheme): string {
+	const parts: string[] = [];
+	parts.push(`tokens vivos ${theme.fg("accent", fmtTokens(summary.liveTokens))}`);
+	parts.push(`custo ${theme.fg("accent", fmtCost(summary.totalCost))}`);
+	if (summary.closedTurns > 0) {
+		const errStyle = summary.errorTurns > 0 ? "error" : "muted";
+		parts.push(theme.fg(errStyle, `erros ${summary.errorTurns}/${summary.closedTurns}`));
+	}
+	if (summary.runningSpan) {
+		parts.push(theme.fg("warning", `executando ${summary.runningSpan}`));
+	}
+	return theme.fg("muted", "  " + parts.join("  ·  "));
+}
+
+function turnLine(turn: TurnRow, theme: RenderTheme): string {
+	const marker =
+		turn.status === "closed"
+			? theme.fg(turn.isError ? "error" : "success", "●")
+			: theme.fg("warning", "◌");
+	const dur = turn.status === "closed" ? fmtDuration(turn.durationMs) : theme.fg("warning", "em voo");
+	const bits: string[] = [`turno ${turn.turnIndex}`, dur];
+	if (turn.model) bits.push(theme.fg("dim", turn.model));
+	if (turn.usage) {
+		bits.push(theme.fg("muted", `${fmtTokens(turn.usage.totalTokens)} tok`));
+		bits.push(theme.fg("muted", fmtCost(turn.usage.cost.total)));
+	}
+	if (turn.provider) {
+		const net =
+			turn.provider.status === 429
+				? theme.fg("error", "429 rate-limit")
+				: theme.fg("dim", `HTTP ${turn.provider.status}`);
+		bits.push(net);
+		if (turn.provider.retries > 0) bits.push(theme.fg("warning", `${turn.provider.retries} retry`));
+	}
+	if (turn.stopReason && turn.stopReason !== "stop") {
+		bits.push(theme.fg("dim", turn.stopReason));
+	}
+	return `  ${marker} ${bits.join("  ")}`;
 }
