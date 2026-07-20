@@ -51,11 +51,20 @@ export interface TurnRow {
 	stopReason?: string;
 	isError: boolean;
 	provider?: ProviderStat;
+	cacheHitRatio?: number;
 }
 
 // Recorte de uma execução de ferramenta para a timeline. Derivado dos ToolCall
 // spans. Um span aberto (sem close) é trabalho em voo; se a sessão morreu no meio,
 // permanece aberto e é exibido como órfão/incompleto.
+export interface ContextRow {
+	spanId: string;
+	turnIndex: number;
+	tokens: number | null;
+	contextWindow: number;
+	compaction?: { tokensBefore: number; summary: string; firstKeptEntryId: string; reason?: string };
+}
+
 export interface ToolRow {
 	spanId: string;
 	toolName: string;
@@ -72,6 +81,8 @@ export interface ToolRow {
 
 // Pulso acumulado da sessão, para o cabeçalho-resumo da TUI.
 export interface SessionSummary {
+	/** Curva de ocupação: snapshots por turno. */
+	contextCurve?: ContextRow[];
 	/** Tokens vivos = totalTokens do último turno fechado com usage (aproximação v1). */
 	liveTokens: number;
 	/** Custo acumulado = soma de usage.cost.total dos turnos fechados. */
@@ -94,6 +105,8 @@ export interface Timeline {
 	turns: TurnRow[];
 	/** Execuções de ferramenta derivadas dos ToolCall spans, em ordem de abertura. */
 	tools: ToolRow[];
+	/** Snapshots de contexto, em ordem de turno. */
+	contexts: ContextRow[];
 	/** Pulso acumulado da sessão. */
 	summary: SessionSummary;
 }
@@ -139,7 +152,8 @@ export function projectTimeline(marks: Mark[]): Timeline {
 	const spans = order.map((id) => byId.get(id)!);
 	const turns = spans.filter((s) => s.span === "turn").map(toTurnRow);
 	const tools = spans.filter((s) => s.span === "tool").map(toToolRow);
-	const timeline: Timeline = { spans, turns, tools, summary: summarize(spans, turns) };
+	const contexts = spans.filter((s) => s.span === "context").map(toContextRow);
+	const timeline: Timeline = { spans, turns, tools, contexts, summary: summarize(spans, turns) };
 
 	const sessionSpan = spans.find((s) => s.span === "session");
 	if (sessionSpan) {
@@ -163,7 +177,11 @@ function toTurnRow(span: TimelineSpan): TurnRow {
 		row.durationMs = span.durationMs;
 	}
 	if (typeof close.model === "string") row.model = close.model;
-	if (isTurnUsage(close.usage)) row.usage = close.usage;
+	if (isTurnUsage(close.usage)) {
+		row.usage = close.usage;
+		const denominator = close.usage.cacheRead + close.usage.input;
+		if (denominator > 0) row.cacheHitRatio = close.usage.cacheRead / denominator;
+	}
 	if (typeof close.stopReason === "string") row.stopReason = close.stopReason;
 	if (isProviderStat(close.provider)) row.provider = close.provider;
 	return row;
@@ -200,6 +218,18 @@ function summarize(spans: TimelineSpan[], turns: TurnRow[]): SessionSummary {
 		}
 	}
 	return summary;
+}
+
+function toContextRow(span: TimelineSpan): ContextRow {
+	const fields = span.closeFields ?? span.openFields;
+	const row: ContextRow = {
+		spanId: span.spanId,
+		turnIndex: Number(fields.turnIndex ?? 0),
+		tokens: typeof fields.tokens === "number" ? fields.tokens : null,
+		contextWindow: Number(fields.contextWindow ?? 0),
+	};
+	if (isRecord(fields.compaction)) row.compaction = fields.compaction as ContextRow["compaction"];
+	return row;
 }
 
 function toToolRow(span: TimelineSpan): ToolRow {

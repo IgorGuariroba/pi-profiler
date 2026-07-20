@@ -238,6 +238,35 @@ export function toolOpen(input: ToolOpenInput): Mark {
 	};
 }
 
+export interface ContextSnapshotInput {
+	seq: number;
+	turnIndex: number;
+	tokens: number | null;
+	contextWindow: number;
+	/** Tokens antes da última compaction, quando houve uma. */
+	compaction?: { tokensBefore: number; summary: string; firstKeptEntryId: string; reason?: string };
+	ts: number;
+}
+
+export function contextSpanId(seq: number): string {
+	return `context-${seq}`;
+}
+
+// Snapshot é instantâneo: open e close no mesmo marco lógico, mantendo o contrato
+// de spans e permitindo a TUI correlacionar a curva com os turnos.
+export function contextOpen(input: ContextSnapshotInput): Mark {
+	const mark: Mark = {
+		v: TRAIL_VERSION, kind: "open", span: "context", spanId: contextSpanId(input.seq),
+		ts: input.ts, turnIndex: input.turnIndex, tokens: input.tokens, contextWindow: input.contextWindow,
+	};
+	if (input.compaction !== undefined) mark.compaction = input.compaction;
+	return mark;
+}
+
+export function contextClose(input: ContextSnapshotInput): Mark {
+	return { ...contextOpen(input), kind: "close" };
+}
+
 export function toolClose(input: ToolCloseInput): Mark {
 	return {
 		v: TRAIL_VERSION,

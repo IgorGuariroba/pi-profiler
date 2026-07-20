@@ -15,6 +15,8 @@ import {
 	turnClose,
 	toolOpen,
 	toolClose,
+	contextOpen,
+	contextClose,
 } from "./src/spans.ts";
 import {
 	TurnAccumulator,
@@ -49,11 +51,13 @@ export default function (pi: ExtensionAPI) {
 	// turnIndex do Pi reinicia entre runs). O turno em andamento fica em `current`.
 	let turnSeq = 0;
 	let current: TurnAccumulator | undefined;
+	let pendingCompaction: { tokensBefore: number; summary: string; firstKeptEntryId: string; reason?: string } | undefined;
 
 	pi.on("session_start", async (event, ctx) => {
 		sessionId = resolveSessionId(ctx);
 		turnSeq = 0;
 		current = undefined;
+		pendingCompaction = undefined;
 		writer = new TrailWriter(sessionId);
 		writer.write(
 			sessionOpen({
@@ -77,9 +81,10 @@ export default function (pi: ExtensionAPI) {
 		current?.recordProviderResponse(event.status, Date.now());
 	});
 
-	pi.on("turn_end", async (event) => {
+	pi.on("turn_end", async (event, ctx) => {
 		if (!writer || !current) return;
 		const message = event.message;
+		const seq = current.seq;
 		writer.write(
 			turnClose({
 				seq: current.seq,
@@ -91,7 +96,30 @@ export default function (pi: ExtensionAPI) {
 				provider: current.providerStat(),
 			}),
 		);
+		const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : undefined;
+		if (usage) {
+			const snapshot = {
+				seq,
+				turnIndex: event.turnIndex,
+				tokens: usage.tokens,
+				contextWindow: usage.contextWindow,
+				compaction: pendingCompaction,
+				ts: Date.now(),
+			};
+			writer.write(contextOpen(snapshot));
+			writer.write(contextClose(snapshot));
+			pendingCompaction = undefined;
+		}
 		current = undefined;
+	});
+
+	pi.on("session_compact", async (event) => {
+		pendingCompaction = {
+			tokensBefore: event.compactionEntry.tokensBefore,
+			summary: event.compactionEntry.summary,
+			firstKeptEntryId: event.compactionEntry.firstKeptEntryId,
+			reason: event.reason,
+		};
 	});
 
 	pi.on("tool_execution_start", async (event) => {

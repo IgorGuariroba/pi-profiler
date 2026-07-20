@@ -88,6 +88,17 @@ export function renderTimeline(timeline: Timeline, theme: RenderTheme = identity
 		for (const turn of timeline.turns) lines.push(turnLine(turn, theme));
 	}
 
+	if (timeline.contexts.length > 0) {
+		lines.push("");
+		lines.push(theme.fg("muted", "  contexto por turno"));
+		for (const point of timeline.contexts) {
+			const tokens = point.tokens === null ? "?" : fmtTokens(point.tokens);
+			const percent = point.tokens === null || point.contextWindow === 0 ? "?" : `${((point.tokens / point.contextWindow) * 100).toFixed(1)}%`;
+			const compact = point.compaction ? theme.fg("warning", `  ↘ compact ${fmtTokens(point.compaction.tokensBefore)}→${tokens}`) : "";
+			lines.push(`  t${point.turnIndex}  ${tokens}/${fmtTokens(point.contextWindow)}  ${percent}${compact}`);
+		}
+	}
+
 	if (timeline.tools.length > 0) {
 		lines.push("");
 		for (const tool of timeline.tools) lines.push(toolLine(tool, theme));
@@ -139,6 +150,7 @@ function turnLine(turn: TurnRow, theme: RenderTheme): string {
 	if (turn.model) bits.push(theme.fg("dim", turn.model));
 	if (turn.usage) {
 		bits.push(theme.fg("muted", `${fmtTokens(turn.usage.totalTokens)} tok`));
+		if (turn.cacheHitRatio !== undefined) bits.push(theme.fg("muted", `cache ${(turn.cacheHitRatio * 100).toFixed(0)}%`));
 		bits.push(theme.fg("muted", fmtCost(turn.usage.cost.total)));
 	}
 	if (turn.provider) {
