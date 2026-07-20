@@ -1,6 +1,6 @@
 {
   "name": "pi-profiler",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Profiler de execução em tempo real para o Pi Coding Agent com trilha JSONL e TUI standalone",
   "keywords": [
@@ -23,7 +23,7 @@
     "pi-profiler": "./dist/bin/pi-profiler.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/bin/pi-profiler.js",
     "test": "node --test \"pi-profiler.tests/*.test.mjs\"",
     "prepack": "npm run build",
     "pack:check": "npm pack --dry-run"
