@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2022",
+    "strict": true,
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "rewriteRelativeImportExtensions": true,
+    "declaration": true,
+    "sourceMap": true,
+    "paths": {
+      "@earendil-works/pi-coding-agent": ["./node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"],
+      "@earendil-works/pi-tui": ["./node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"]
+    }
+  },
+  "include": ["index.ts", "src/**/*.ts", "bin/**/*.ts"],
+  "exclude": ["pi-profiler.tests", "dist"]
+}

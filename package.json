@@ -1,8 +1,8 @@
 {
   "name": "pi-profiler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
-  "description": "Profiler de execução em tempo real para o Pi Coding Agent — coletor in-process grava uma trilha JSONL por sessão e a TUI standalone pi-profiler a inspeciona ao vivo",
+  "description": "Profiler de execução em tempo real para o Pi Coding Agent com trilha JSONL e TUI standalone",
   "keywords": [
     "pi-package",
     "pi",
@@ -12,17 +12,26 @@
   ],
   "license": "MIT",
   "bin": {
-    "pi-profiler": "./bin/pi-profiler.ts"
+    "pi-profiler": "./dist/bin/pi-profiler.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --test \"pi-profiler.tests/*.test.mjs\"",
+    "prepack": "npm run build",
+    "pack:check": "npm pack --dry-run"
   },
   "files": [
+    "dist",
     "index.ts",
     "src",
-    "bin",
-    "CONTEXT.md",
     "README.md"
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typescript": "^5.7.0"
   },
   "pi": {
     "extensions": [
