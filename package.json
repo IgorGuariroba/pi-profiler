@@ -11,6 +11,14 @@
     "tui"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IgorGuariroba/pi-profiler.git"
+  },
+  "bugs": {
+    "url": "https://github.com/IgorGuariroba/pi-profiler/issues"
+  },
+  "homepage": "https://github.com/IgorGuariroba/pi-profiler#readme",
   "bin": {
     "pi-profiler": "./dist/bin/pi-profiler.js"
   },
