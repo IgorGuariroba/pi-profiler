@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderTimeline } from "../src/render.ts";
 import { projectTimeline } from "../src/timeline.ts";
-import { sessionOpen, sessionClose, turnOpen, turnClose } from "../src/spans.ts";
+import { sessionOpen, sessionClose, turnOpen, turnClose, toolOpen, toolClose } from "../src/spans.ts";
 
 function joined(marks) {
 	return renderTimeline(projectTimeline(marks)).join("\n");
@@ -70,4 +70,38 @@ test("taxa de erro aparece no cabeçalho quando há turno com erro", () => {
 		turnClose({ seq: 1, ts: 2, isError: true, stopReason: "error" }),
 	]);
 	assert.match(out, /erros 1\/1/);
+});
+
+test("tool fechado aparece como barra com comando e bytesOut", () => {
+	const out = joined([
+		toolOpen({ toolCallId: "c1", toolName: "bash", args: { command: "ls -la" }, ts: 1000 }),
+		toolClose({ toolCallId: "c1", toolName: "bash", bytesOut: 2048, isError: false, ts: 1500 }),
+	]);
+	assert.match(out, /bash/);
+	assert.match(out, /ls -la/);
+	assert.match(out, /2\.0KB/);
+});
+
+test("tool em voo mostra 'em voo' e o comando já visível", () => {
+	const out = joined([
+		toolOpen({ toolCallId: "c2", toolName: "bash", args: { command: "sleep 40" }, ts: 1000 }),
+	]);
+	assert.match(out, /sleep 40/);
+	assert.match(out, /em voo/);
+});
+
+test("tool com erro é marcado", () => {
+	const out = joined([
+		toolOpen({ toolCallId: "c3", toolName: "bash", args: { command: "false" }, ts: 1 }),
+		toolClose({ toolCallId: "c3", toolName: "bash", bytesOut: 0, isError: true, ts: 2 }),
+	]);
+	assert.match(out, /erro/);
+});
+
+test("path de um read fica visível na barra", () => {
+	const out = joined([
+		toolOpen({ toolCallId: "c4", toolName: "read", args: { path: "/etc/hosts" }, ts: 1 }),
+		toolClose({ toolCallId: "c4", toolName: "read", bytesOut: 100, isError: false, ts: 2 }),
+	]);
+	assert.match(out, /\/etc\/hosts/);
 });

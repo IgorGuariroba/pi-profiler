@@ -162,3 +162,57 @@ test("turno completo grava Turn open/close com usage e provider", async () => {
 		t.restore();
 	}
 });
+
+test("registra os handlers de execução de ferramenta", async () => {
+	const t = withTempHome();
+	try {
+		const { default: factory } = await import(`../index.ts?case=tool-reg`);
+		const { handlers, pi } = makePi();
+		factory(pi);
+		assert.equal(typeof handlers.tool_execution_start, "function");
+		assert.equal(typeof handlers.tool_execution_end, "function");
+	} finally {
+		t.restore();
+	}
+});
+
+test("execução de ferramenta grava ToolCall open/close com args e bytesOut", async () => {
+	const t = withTempHome();
+	try {
+		const { default: factory } = await import(`../index.ts?case=tool-full`);
+		const { handlers, pi } = makePi();
+		factory(pi);
+
+		const ctx = makeCtx({ sessionId: "sess-tool" });
+		await handlers.session_start({ reason: "startup" }, ctx);
+		await handlers.tool_execution_start(
+			{ toolCallId: "call1", toolName: "bash", args: { command: "ls -la" } },
+			ctx,
+		);
+		await handlers.tool_execution_end(
+			{
+				toolCallId: "call1",
+				toolName: "bash",
+				result: { content: [{ type: "text", text: "total 0" }] },
+				isError: false,
+			},
+			ctx,
+		);
+		await handlers.session_shutdown({ reason: "quit" }, ctx);
+
+		const path = trailPath("sess-tool", homedir());
+		const marks = await new TrailReader(path).poll();
+		const open = marks.find((m) => m.span === "tool" && m.kind === "open");
+		const close = marks.find((m) => m.span === "tool" && m.kind === "close");
+
+		assert.ok(open);
+		assert.ok(close);
+		assert.equal(open.spanId, close.spanId);
+		assert.equal(open.toolName, "bash");
+		assert.equal(open.args.command, "ls -la");
+		assert.equal(close.bytesOut, 7); // "total 0"
+		assert.equal(close.isError, false);
+	} finally {
+		t.restore();
+	}
+});

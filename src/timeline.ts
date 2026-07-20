@@ -53,6 +53,23 @@ export interface TurnRow {
 	provider?: ProviderStat;
 }
 
+// Recorte de uma execução de ferramenta para a timeline. Derivado dos ToolCall
+// spans. Um span aberto (sem close) é trabalho em voo; se a sessão morreu no meio,
+// permanece aberto e é exibido como órfão/incompleto.
+export interface ToolRow {
+	spanId: string;
+	toolName: string;
+	status: SpanStatus;
+	startedAt: number;
+	endedAt?: number;
+	durationMs?: number;
+	/** Args crus resumidos (strings grandes truncadas). */
+	args: Record<string, unknown>;
+	/** Bytes de saída, quando fechado. */
+	bytesOut?: number;
+	isError: boolean;
+}
+
 // Pulso acumulado da sessão, para o cabeçalho-resumo da TUI.
 export interface SessionSummary {
 	/** Tokens vivos = totalTokens do último turno fechado com usage (aproximação v1). */
@@ -75,6 +92,8 @@ export interface Timeline {
 	session?: SessionFrame;
 	/** Turnos derivados dos Turn spans, em ordem de abertura. */
 	turns: TurnRow[];
+	/** Execuções de ferramenta derivadas dos ToolCall spans, em ordem de abertura. */
+	tools: ToolRow[];
 	/** Pulso acumulado da sessão. */
 	summary: SessionSummary;
 }
@@ -119,7 +138,8 @@ export function projectTimeline(marks: Mark[]): Timeline {
 
 	const spans = order.map((id) => byId.get(id)!);
 	const turns = spans.filter((s) => s.span === "turn").map(toTurnRow);
-	const timeline: Timeline = { spans, turns, summary: summarize(spans, turns) };
+	const tools = spans.filter((s) => s.span === "tool").map(toToolRow);
+	const timeline: Timeline = { spans, turns, tools, summary: summarize(spans, turns) };
 
 	const sessionSpan = spans.find((s) => s.span === "session");
 	if (sessionSpan) {
@@ -180,6 +200,28 @@ function summarize(spans: TimelineSpan[], turns: TurnRow[]): SessionSummary {
 		}
 	}
 	return summary;
+}
+
+function toToolRow(span: TimelineSpan): ToolRow {
+	const close = span.closeFields ?? {};
+	const row: ToolRow = {
+		spanId: span.spanId,
+		toolName: String(span.openFields.toolName ?? "?"),
+		status: span.status,
+		startedAt: span.startedAt,
+		args: isRecord(span.openFields.args) ? span.openFields.args : {},
+		isError: close.isError === true,
+	};
+	if (span.status === "closed") {
+		row.endedAt = span.endedAt;
+		row.durationMs = span.durationMs;
+		if (typeof close.bytesOut === "number") row.bytesOut = close.bytesOut;
+	}
+	return row;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
 }
 
 function isTurnUsage(value: unknown): value is TurnUsage {

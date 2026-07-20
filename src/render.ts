@@ -2,7 +2,7 @@
 // para poder ser testado como função pura: recebe o modelo da timeline e um tema
 // mínimo, devolve as linhas a exibir.
 
-import type { Timeline, TimelineSpan, TurnRow, SessionSummary } from "./timeline.ts";
+import type { Timeline, TimelineSpan, TurnRow, ToolRow, SessionSummary } from "./timeline.ts";
 
 // Subconjunto do theme do pi-tui de que precisamos. O binário passa o theme real;
 // os testes passam um tema identidade.
@@ -29,6 +29,25 @@ function fmtCost(usd: number): string {
 function fmtTokens(n: number): string {
 	if (n < 1000) return String(n);
 	return `${(n / 1000).toFixed(1)}k`;
+}
+
+function fmtBytes(n: number): string {
+	if (n < 1024) return `${n}B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+	return `${(n / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+// Descreve o alvo de uma chamada de ferramenta a partir dos args crus: o comando
+// do bash, o path de read/write/edit, ou o primeiro campo string disponível.
+function toolTarget(tool: ToolRow): string | undefined {
+	const a = tool.args;
+	if (typeof a.command === "string") return a.command;
+	if (typeof a.path === "string") return a.path;
+	if (typeof a.pattern === "string") return a.pattern;
+	for (const val of Object.values(a)) {
+		if (typeof val === "string") return val;
+	}
+	return undefined;
 }
 
 function spanLine(span: TimelineSpan, theme: RenderTheme): string {
@@ -67,12 +86,33 @@ export function renderTimeline(timeline: Timeline, theme: RenderTheme = identity
 	if (timeline.turns.length > 0) {
 		lines.push("");
 		for (const turn of timeline.turns) lines.push(turnLine(turn, theme));
-	} else if (timeline.spans.length > 0) {
+	}
+
+	if (timeline.tools.length > 0) {
+		lines.push("");
+		for (const tool of timeline.tools) lines.push(toolLine(tool, theme));
+	}
+
+	if (timeline.turns.length === 0 && timeline.tools.length === 0 && timeline.spans.length > 0) {
 		lines.push("");
 		for (const span of timeline.spans) lines.push(spanLine(span, theme));
 	}
 
 	return lines;
+}
+
+function toolLine(tool: ToolRow, theme: RenderTheme): string {
+	const marker =
+		tool.status === "closed"
+			? theme.fg(tool.isError ? "error" : "success", "●")
+			: theme.fg("warning", "◌");
+	const dur = tool.status === "closed" ? fmtDuration(tool.durationMs) : theme.fg("warning", "em voo");
+	const bits: string[] = [theme.fg("toolTitle", tool.toolName), dur];
+	const target = toolTarget(tool);
+	if (target) bits.push(theme.fg("dim", target));
+	if (tool.bytesOut !== undefined) bits.push(theme.fg("muted", fmtBytes(tool.bytesOut)));
+	if (tool.isError) bits.push(theme.fg("error", "erro"));
+	return `  ${marker} ${bits.join("  ")}`;
 }
 
 function summaryLine(summary: SessionSummary, theme: RenderTheme): string {

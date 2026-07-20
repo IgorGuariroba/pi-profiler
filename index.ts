@@ -8,7 +8,14 @@
 // factory; abrir o WriteStream em session_start, fechar em session_shutdown.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { TrailWriter } from "./src/trail.ts";
-import { sessionOpen, sessionClose, turnOpen, turnClose } from "./src/spans.ts";
+import {
+	sessionOpen,
+	sessionClose,
+	turnOpen,
+	turnClose,
+	toolOpen,
+	toolClose,
+} from "./src/spans.ts";
 import {
 	TurnAccumulator,
 	messageModel,
@@ -16,6 +23,7 @@ import {
 	messageIsError,
 	messageStopReason,
 } from "./src/turn-accumulator.ts";
+import { resultBytesOut } from "./src/tool-result.ts";
 
 // Deriva "provider/id" do modelo atual, ou undefined se ainda desconhecido.
 function modelLabel(ctx: ExtensionContext): string | undefined {
@@ -84,6 +92,31 @@ export default function (pi: ExtensionAPI) {
 			}),
 		);
 		current = undefined;
+	});
+
+	pi.on("tool_execution_start", async (event) => {
+		if (!writer) return;
+		writer.write(
+			toolOpen({
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				args: event.args,
+				ts: Date.now(),
+			}),
+		);
+	});
+
+	pi.on("tool_execution_end", async (event) => {
+		if (!writer) return;
+		writer.write(
+			toolClose({
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				bytesOut: resultBytesOut(event.result),
+				isError: event.isError === true,
+				ts: Date.now(),
+			}),
+		);
 	});
 
 	pi.on("session_shutdown", async (event) => {
