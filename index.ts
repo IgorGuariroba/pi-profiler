@@ -142,6 +142,8 @@ export default function (pi: ExtensionAPI) {
 				toolName: event.toolName,
 				bytesOut: resultBytesOut(event.result),
 				isError: event.isError === true,
+				exitCode: typeof event.result?.details?.exitCode === "number" ? event.result.details.exitCode : undefined,
+				outputTruncated: event.result?.details?.truncated === true,
 				ts: Date.now(),
 			}),
 		);

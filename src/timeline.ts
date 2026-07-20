@@ -60,9 +60,28 @@ export interface TurnRow {
 export interface ContextRow {
 	spanId: string;
 	turnIndex: number;
+	startedAt: number;
 	tokens: number | null;
 	contextWindow: number;
 	compaction?: { tokensBefore: number; summary: string; firstKeptEntryId: string; reason?: string };
+}
+
+export interface FileAggregate {
+	path: string;
+	reads: number;
+	writes: number;
+	edits: number;
+	calls: number;
+	wastedReads: number;
+}
+
+export interface CommandAggregate {
+	command: string;
+	calls: number;
+	errors: number;
+	avgDurationMs: number;
+	outputTruncated: number;
+	exitCodes: Record<string, number>;
 }
 
 export interface ToolRow {
@@ -77,6 +96,9 @@ export interface ToolRow {
 	/** Bytes de saída, quando fechado. */
 	bytesOut?: number;
 	isError: boolean;
+	exitCode?: number;
+	outputTruncated?: boolean;
+	wastedRead?: boolean;
 }
 
 // Pulso acumulado da sessão, para o cabeçalho-resumo da TUI.
@@ -107,6 +129,8 @@ export interface Timeline {
 	tools: ToolRow[];
 	/** Snapshots de contexto, em ordem de turno. */
 	contexts: ContextRow[];
+	files: FileAggregate[];
+	commands: CommandAggregate[];
 	/** Pulso acumulado da sessão. */
 	summary: SessionSummary;
 }
@@ -151,9 +175,9 @@ export function projectTimeline(marks: Mark[]): Timeline {
 
 	const spans = order.map((id) => byId.get(id)!);
 	const turns = spans.filter((s) => s.span === "turn").map(toTurnRow);
-	const tools = spans.filter((s) => s.span === "tool").map(toToolRow);
 	const contexts = spans.filter((s) => s.span === "context").map(toContextRow);
-	const timeline: Timeline = { spans, turns, tools, contexts, summary: summarize(spans, turns) };
+	const tools = markWastefulReads(spans.filter((s) => s.span === "tool").map(toToolRow), contexts);
+	const timeline: Timeline = { spans, turns, tools, contexts, files: aggregateFiles(tools), commands: aggregateCommands(tools), summary: summarize(spans, turns) };
 
 	const sessionSpan = spans.find((s) => s.span === "session");
 	if (sessionSpan) {
@@ -225,6 +249,7 @@ function toContextRow(span: TimelineSpan): ContextRow {
 	const row: ContextRow = {
 		spanId: span.spanId,
 		turnIndex: Number(fields.turnIndex ?? 0),
+		startedAt: span.startedAt,
 		tokens: typeof fields.tokens === "number" ? fields.tokens : null,
 		contextWindow: Number(fields.contextWindow ?? 0),
 	};
@@ -246,8 +271,56 @@ function toToolRow(span: TimelineSpan): ToolRow {
 		row.endedAt = span.endedAt;
 		row.durationMs = span.durationMs;
 		if (typeof close.bytesOut === "number") row.bytesOut = close.bytesOut;
+		if (typeof close.exitCode === "number") row.exitCode = close.exitCode;
+		if (close.outputTruncated === true) row.outputTruncated = true;
 	}
 	return row;
+}
+
+function toolPath(tool: ToolRow): string | undefined {
+	return typeof tool.args.path === "string" ? tool.args.path : undefined;
+}
+
+function markWastefulReads(tools: ToolRow[], contexts: ContextRow[]): ToolRow[] {
+	const lastRead = new Map<string, ToolRow>();
+	const lastMutation = new Map<string, number>();
+	for (const tool of tools) {
+		const path = toolPath(tool);
+		if (!path || !["read", "write", "edit"].includes(tool.toolName)) continue;
+		if (tool.toolName === "read") {
+			const prior = lastRead.get(path);
+			const mutation = lastMutation.get(path) ?? -Infinity;
+			const compaction = contexts.some((c) => c.compaction && c.compaction.tokensBefore > 0 && c.startedAt <= tool.startedAt && c.startedAt > (prior?.startedAt ?? -Infinity));
+			if (prior && mutation < prior.startedAt && !compaction) tool.wastedRead = true;
+			lastRead.set(path, tool);
+		} else {
+			lastMutation.set(path, tool.startedAt);
+		}
+	}
+	return tools;
+}
+
+function aggregateFiles(tools: ToolRow[]): FileAggregate[] {
+	const map = new Map<string, FileAggregate>();
+	for (const tool of tools) {
+		const path = toolPath(tool); if (!path) continue;
+		const row = map.get(path) ?? { path, reads: 0, writes: 0, edits: 0, calls: 0, wastedReads: 0 };
+		row.calls++; if (tool.toolName === "read") row.reads++; if (tool.toolName === "write") row.writes++; if (tool.toolName === "edit") row.edits++; if (tool.wastedRead) row.wastedReads++;
+		map.set(path, row);
+	}
+	return [...map.values()].sort((a, b) => b.calls - a.calls);
+}
+
+function aggregateCommands(tools: ToolRow[]): CommandAggregate[] {
+	const map = new Map<string, CommandAggregate & { totalDuration: number }>();
+	for (const tool of tools) {
+		if (tool.toolName !== "bash") continue;
+		const command = typeof tool.args.command === "string" ? tool.args.command : "?";
+		const row = map.get(command) ?? { command, calls: 0, errors: 0, avgDurationMs: 0, outputTruncated: 0, exitCodes: {}, totalDuration: 0 };
+		row.calls++; row.totalDuration += tool.durationMs ?? 0; row.avgDurationMs = row.totalDuration / row.calls; if (tool.isError) row.errors++; if (tool.outputTruncated) row.outputTruncated++; if (tool.exitCode !== undefined) row.exitCodes[String(tool.exitCode)] = (row.exitCodes[String(tool.exitCode)] ?? 0) + 1;
+		map.set(command, row);
+	}
+	return [...map.values()].sort((a, b) => b.calls - a.calls);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

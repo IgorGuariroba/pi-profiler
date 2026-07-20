@@ -219,6 +219,8 @@ export interface ToolCloseInput {
 	/** Bytes de texto do resultado (saída enviada ao LLM). */
 	bytesOut: number;
 	isError: boolean;
+	exitCode?: number;
+	outputTruncated?: boolean;
 	ts: number;
 }
 
@@ -268,7 +270,7 @@ export function contextClose(input: ContextSnapshotInput): Mark {
 }
 
 export function toolClose(input: ToolCloseInput): Mark {
-	return {
+	const mark: Mark = {
 		v: TRAIL_VERSION,
 		kind: "close",
 		span: "tool",
@@ -278,4 +280,7 @@ export function toolClose(input: ToolCloseInput): Mark {
 		bytesOut: input.bytesOut,
 		isError: input.isError,
 	};
+	if (input.exitCode !== undefined) mark.exitCode = input.exitCode;
+	if (input.outputTruncated !== undefined) mark.outputTruncated = input.outputTruncated;
+	return mark;
 }

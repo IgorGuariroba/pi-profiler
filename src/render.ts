@@ -104,6 +104,15 @@ export function renderTimeline(timeline: Timeline, theme: RenderTheme = identity
 		for (const tool of timeline.tools) lines.push(toolLine(tool, theme));
 	}
 
+	if (timeline.files.length > 0) {
+		lines.push(""); lines.push(theme.fg("muted", "  arquivos"));
+		for (const f of timeline.files) lines.push(`  ${f.path}  ${f.calls} chamadas  read ${f.reads}  write ${f.writes}  edit ${f.edits}${f.wastedReads ? `  desperdício ${f.wastedReads}` : ""}`);
+	}
+	if (timeline.commands.length > 0) {
+		lines.push(""); lines.push(theme.fg("muted", "  comandos"));
+		for (const c of timeline.commands) lines.push(`  ${c.command}  ${c.calls}x  média ${fmtDuration(c.avgDurationMs)}${c.errors ? `  erros ${c.errors}` : ""}${c.outputTruncated ? `  saída truncada ${c.outputTruncated}x` : ""}`);
+	}
+
 	if (timeline.turns.length === 0 && timeline.tools.length === 0 && timeline.spans.length > 0) {
 		lines.push("");
 		for (const span of timeline.spans) lines.push(spanLine(span, theme));
@@ -123,6 +132,7 @@ function toolLine(tool: ToolRow, theme: RenderTheme): string {
 	if (target) bits.push(theme.fg("dim", target));
 	if (tool.bytesOut !== undefined) bits.push(theme.fg("muted", fmtBytes(tool.bytesOut)));
 	if (tool.isError) bits.push(theme.fg("error", "erro"));
+	if (tool.wastedRead) bits.push(theme.fg("warning", "releitura desperdiçada"));
 	return `  ${marker} ${bits.join("  ")}`;
 }
 
