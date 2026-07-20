@@ -14,6 +14,7 @@ import { latestTrail, listTrails, trailPath } from "../src/trail.ts";
 import { tailTrail } from "../src/reader.ts";
 import { projectTimeline, type Timeline } from "../src/timeline.ts";
 import { renderTimeline, identityTheme, type RenderTheme } from "../src/render.ts";
+import { renderTab, nextTab, type ProfilerTab } from "../src/tabs.ts";
 import type { Mark } from "../src/spans.ts";
 
 interface Target {
@@ -58,13 +59,19 @@ async function tryLiveRenderer(): Promise<
 		const app = new tui.TUI(terminal);
 		const text = new tui.Text("", 0, 0);
 		app.addChild(text);
+		let tab: ProfilerTab = "timeline";
+		let latest: Timeline | undefined;
+		const redraw = () => { if (latest) { text.setText(renderTab(latest, tab, theme).join("\n")); app.requestRender(); } };
+		terminal.start((data: string) => {
+			if (/^[1-5]$/.test(data)) tab = ["timeline", "files", "commands", "network", "cost"][Number(data) - 1] as ProfilerTab;
+			else if (data === "\t") tab = nextTab(tab, 1);
+			else if (data === "\x1b[Z") tab = nextTab(tab, -1);
+			redraw();
+		}, () => app.requestRender());
 		app.start();
 		return {
 			theme,
-			update: (tl: Timeline) => {
-				text.setText(renderTimeline(tl, theme).join("\n"));
-				app.requestRender();
-			},
+			update: (tl: Timeline) => { latest = tl; redraw(); },
 			stop: () => app.stop(),
 		};
 	} catch {
